@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cotizador 48 Voltios — Frontend</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;max-width:980px;margin:18px auto;color:#0b1220}
+    header{display:flex;align-items:center;gap:16px}
+    h1{margin:0;font-size:20px}
+    .card{background:#fff;border-radius:8px;padding:18px;margin-top:14px;box-shadow:0 6px 18px rgba(2,6,23,.06)}
+    label{display:block;margin-top:10px}
+    input[type="text"], input[type="number"], select{padding:8px;width:100%;box-sizing:border-box;border-radius:6px;border:1px solid #d1d5db}
+    .row{display:flex;gap:12px}
+    .col{flex:1}
+    .inline{display:inline-block;margin-right:12px}
+    button{background:#4ad395;border:0;color:#062223;padding:10px 14px;border-radius:8px;cursor:pointer}
+    button.secondary{background:#eef2f7;color:#09202a}
+    pre{background:#0b1220;color:#d1f7f0;padding:12px;border-radius:8px;overflow:auto}
+    .small{font-size:13px;color:#6b7280}
+    .hidden{display:none}
+    .controls{display:flex;gap:8px;margin-top:12px}
+    .center{display:flex;align-items:center;gap:8px}
+    footer{margin-top:18px;font-size:13px;color:#6b7280}
+  </style>
+</head>
+<body>
+  <header>
+    <img src="" alt="" id="logo" style="width:56px;height:56px;border-radius:8px;background:#eee"/>
+    <div>
+      <h1>Cotizador 48 Voltios — Interfaz</h1>
+      <div class="small">Rellena el formulario y genera la cotización en PDF (usa tu API en Render).</div>
+    </div>
+  </header>
+
+  <div class="card" id="formCard">
+    <label>Cliente
+      <input id="cliente" type="text" placeholder="Nombre del cliente" value="Cliente prueba">
+    </label>
+
+    <div style="margin-top:12px">
+      <div class="small">Servicio</div>
+      <label class="inline"><input type="radio" name="servicio" value="sonido_directo" checked> Sonido directo</label>
+      <label class="inline"><input type="radio" name="servicio" value="postproduccion"> Postproducción</label>
+      <label class="inline"><input type="radio" name="servicio" value="ambos"> Ambos</label>
+    </div>
+
+    <!-- SONIDO DIRECTO -->
+    <div id="panel-sonido" class="card" style="margin-top:14px;">
+      <h3 style="margin:0 0 8px 0">Sonido Directo</h3>
+      <div class="row">
+        <div class="col">
+          <label>Días (alquiler): <input id="sd_dias" type="number" min="0" value="1"></label>
+        </div>
+        <div class="col">
+          <label>Micrófonos shotgun (cantidad): <input id="sd_shotgun" type="number" min="0" value="0"></label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label>Sistemas lavalier (cantidad): <input id="sd_lavalier" type="number" min="0" value="0"></label>
+        </div>
+        <div class="col">
+          <label>Monitoreo (cantidad): <input id="sd_monitoreo" type="number" min="0" value="0"></label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label>Timecode (cantidad): <input id="sd_timecode" type="number" min="0" value="0"></label>
+        </div>
+        <div class="col">
+          <label>Grabadora:
+            <select id="sd_grabadora">
+              <option value="">(ninguna)</option>
+              <option value="6">MixPre-6</option>
+              <option value="10">MixPre-10</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div style="margin-top:6px">
+        <label class="inline"><input id="sd_sonidista" type="checkbox"> Sonidista</label>
+        <label class="inline"><input id="sd_microfonista" type="checkbox"> Microfonista</label>
+      </div>
+    </div>
+
+    <!-- POSTPRODUCCIÓN -->
+    <div id="panel-post" class="card" style="margin-top:14px;">
+      <h3 style="margin:0 0 8px 0">Postproducción</h3>
+      <label>Minutos del proyecto: <input id="pp_minutos" type="number" min="0" value="0"></label>
+      <div style="margin-top:8px">
+        <div class="small">Mezcla</div>
+        <label class="inline"><input name="mezcla" type="radio" value="stereo" checked> Estéreo</label>
+        <label class="inline"><input name="mezcla" type="radio" value="5.1"> 5.1</label>
+      </div>
+    </div>
+
+    <div style="margin-top:12px" class="row">
+      <div class="col">
+        <label>Aplicar IVA (19%): <input id="aplicar_iva" type="checkbox"></label>
+      </div>
+      <div class="col">
+        <label>Descuento: 
+          <select id="descuento">
+            <option value="0">0%</option>
+            <option value="10">10%</option>
+            <option value="20">20%</option>
+            <option value="30">30%</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="btnPdf">Generar PDF (descargar)</button>
+      <button id="btnJson" class="secondary">Ver JSON (previsualizar)</button>
+      <div style="flex:1"></div>
+      <div class="small" id="status">Estado: listo</div>
+    </div>
+  </div>
+
+  <div id="resultado" class="card hidden">
+    <h3>Respuesta JSON</h3>
+    <pre id="jsonOut">-</pre>
+    <div style="margin-top:8px">
+      <button id="volver" class="secondary">Volver al formulario</button>
+    </div>
+  </div>
+
+  <footer>
+    <div class="small">Instrucciones rápidas: elige servicio, completa valores y pulsa <b>Generar PDF</b>. Si ves errores, revisa la consola del navegador.</div>
+  </footer>
+
+  <script>
+    /*****************************************
+     *  CONFIG: reemplaza esta URL por la tuya
+     *****************************************/
+    const API_URL = "https://cotizador-api-0erd.onrender.com"; // <- reemplaza si tu URL es distinta
+
+    /*****************************************
+     *  Lógica UI / eventos
+     *****************************************/
+    const serviciosRadios = document.getElementsByName('servicio');
+    const panelSonido = document.getElementById('panel-sonido');
+    const panelPost = document.getElementById('panel-post');
+    const btnPdf = document.getElementById('btnPdf');
+    const btnJson = document.getElementById('btnJson');
+    const statusEl = document.getElementById('status');
+    const resultadoCard = document.getElementById('resultado');
+    const formCard = document.getElementById('formCard');
+    const jsonOut = document.getElementById('jsonOut');
+    const volverBtn = document.getElementById('volver');
+
+    function servicioSeleccionado() {
+      for (const r of serviciosRadios) if (r.checked) return r.value;
+      return 'sonido_directo';
+    }
+    function actualizarPanels() {
+      const s = servicioSeleccionado();
+      panelSonido.style.display = (s === 'sonido_directo' || s === 'ambos') ? 'block' : 'none';
+      panelPost.style.display = (s === 'postproduccion' || s === 'ambos') ? 'block' : 'none';
+    }
+    for (const r of serviciosRadios) r.addEventListener('change', actualizarPanels);
+    actualizarPanels();
+
+    function setStatus(t) { statusEl.textContent = "Estado: " + t; }
+
+    function buildPayload() {
+      const cliente = document.getElementById('cliente').value.trim() || "Cliente sin nombre";
+      const servicio = servicioSeleccionado();
+      const aplicar_iva = document.getElementById('aplicar_iva').checked;
+      const descuento_pct = parseInt(document.getElementById('descuento').value || "0");
+
+      const payload = { cliente, servicio, aplicar_iva, descuento_pct };
+
+      if (servicio === 'sonido_directo' || servicio === 'ambos') {
+        payload.sonido = {
+          dias: parseInt(document.getElementById('sd_dias').value || "0"),
+          shotgun: parseInt(document.getElementById('sd_shotgun').value || "0"),
+          lavalier: parseInt(document.getElementById('sd_lavalier').value || "0"),
+          monitoreo: parseInt(document.getElementById('sd_monitoreo').value || "0"),
+          timecode: parseInt(document.getElementById('sd_timecode').value || "0"),
+          grabadora: document.getElementById('sd_grabadora').value || "",
+          sonidista: document.getElementById('sd_sonidista').checked,
+          microfonista: document.getElementById('sd_microfonista').checked
+        };
+      } else {
+        payload.sonido = null;
+      }
+
+      if (servicio === 'postproduccion' || servicio === 'ambos') {
+        const mezcla = document.querySelector('input[name="mezcla"]:checked').value || "stereo";
+        payload.post = { minutos: parseInt(document.getElementById('pp_minutos').value || "0"), mezcla };
+      } else {
+        payload.post = null;
+      }
+
+      // opcional nombre de archivo
+      payload.pdf_filename = `cotizacion_${cliente.replace(/\s+/g,'_')}.pdf`;
+
+      return payload;
+    }
+
+    async function fetchJsonPreview() {
+      try {
+        setStatus("generando preview JSON...");
+        const payload = buildPayload();
+        const res = await fetch(API_URL + "/cotizar/json", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        jsonOut.textContent = JSON.stringify(data, null, 2);
+        formCard.classList.add('hidden');
+        resultadoCard.classList.remove('hidden');
+        setStatus("preview listo");
+      } catch (err) {
+        console.error(err);
+        alert("Error al generar preview: " + (err.message||err));
+        setStatus("error");
+      }
+    }
+
+    async function fetchPdfAndDownload() {
+      try {
+        setStatus("generando PDF...");
+        btnPdf.disabled = true;
+        const payload = buildPayload();
+        const res = await fetch(API_URL + "/cotizar/pdf", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error("Error del servidor: " + res.status + " - " + text);
+        }
+
+        const blob = await res.blob();
+        // tratar de obtener filename del header (si lo envía)
+        let filename = payload.pdf_filename || "cotizacion.pdf";
+        const cd = res.headers.get("Content-Disposition");
+        if (cd) {
+          const m = cd.match(/filename="?(.+?)"?(\;|$)/);
+          if (m) filename = m[1];
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        setStatus("PDF descargado");
+      } catch (err) {
+        console.error(err);
+        alert("Error generando PDF:\n" + (err.message || err));
+        setStatus("error");
+      } finally {
+        btnPdf.disabled = false;
+      }
+    }
+
+    btnJson.addEventListener('click', (e) => { e.preventDefault(); fetchJsonPreview(); });
+    btnPdf.addEventListener('click', (e) => { e.preventDefault(); fetchPdfAndDownload(); });
+    volverBtn.addEventListener('click', () => { resultadoCard.classList.add('hidden'); formCard.classList.remove('hidden'); });
+
+    // Prefill / debug: si quieres ver logs en consola
+    console.log("Frontend listo. API_URL=", API_URL);
+  </script>
+</body>
+</html>
