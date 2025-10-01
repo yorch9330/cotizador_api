@@ -273,7 +273,7 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     try:
         if logo_path:
             # RLImage acepta directamente la ruta
-            logo = RLImage(logo_path, width=120, height=60)
+            logo = RLImage(logo_path, width=240, height=120)
         else:
             raise FileNotFoundError("logo no encontrado en candidatos: " + ", ".join(logo_candidates))
     except Exception:
