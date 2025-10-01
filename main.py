@@ -1,4 +1,4 @@
-# main.py
+# main.py (VERSIÓN CORREGIDA)
 import io
 import os
 import logging
@@ -7,11 +7,10 @@ from typing import Optional, List, Union
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-# logging básico
+# Config logging simple
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cotizador")
 
@@ -67,11 +66,9 @@ app = FastAPI(title="API - Cotizador 48 Voltios")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------
 # Precios (constantes)
@@ -87,15 +84,13 @@ P_MICROFONISTA = 250_000
 P_POST_STEREO = 300_000
 P_POST_5_1 = 400_000
 
-# BASE_DIR: directorio donde está este fichero main.py
+# BASE_DIR es el directorio donde está este archivo
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# STATIC_DIR: carpeta donde pondremos logo48v.png y firma_jorge.png
+# STATIC_DIR: carpeta donde pondremos logo48v.png / firma_jorge.png
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-os.makedirs(STATIC_DIR, exist_ok=True)  # crea static/ si no existe
 
-# Montamos static para poder probar en el navegador: /static/<archivo>
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+logger.info(f"BASE_DIR={BASE_DIR}")
+logger.info(f"STATIC_DIR={STATIC_DIR}")
 
 # ---------------------------
 # Lógica de cálculo (igual a la tuya)
@@ -164,6 +159,7 @@ def calcular_items(c: CotizarIn):
                           "duracion": f"{profesional_days} días", "unitario": P_MICROFONISTA, "subtotal": sub})
             subtotal_sd += sub
 
+    # POSTPRODUCCIÓN
     if servicio in ("postproduccion", "ambos"):
         post = c.post or PostProduccionIn()
         minutos = max(0, int(post.minutos or 0))
@@ -234,7 +230,7 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
         from reportlab.lib.utils import ImageReader
     except Exception as e:
         logger.exception("ReportLab import failed")
-        raise RuntimeError("ReportLab no está instalado. Añade 'reportlab' y 'pillow' al requirements.txt") from e
+        raise RuntimeError("ReportLab no está instalado. Añade 'reportlab' y 'pillow' a requirements.txt") from e
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -255,17 +251,33 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     estilo_info = estilos['Normal'].clone('info')
     estilo_info.alignment = TA_RIGHT
 
-    # Rutas dentro de static/
-    logo_path = os.path.join(STATIC_DIR, "logo48v.png")
-    firma_path = os.path.join(STATIC_DIR, "firma_jorge.png")
+    # Construimos varias rutas candidatas (por seguridad)
+    logo_candidates = [
+        os.path.join(STATIC_DIR, "logo48v.png"),
+        os.path.join(BASE_DIR, "logo48v.png"),
+        os.path.join(BASE_DIR, "static", "logo48v.png"),
+    ]
+    firma_candidates = [
+        os.path.join(STATIC_DIR, "firma_jorge.png"),
+        os.path.join(BASE_DIR, "firma_jorge.png"),
+        os.path.join(BASE_DIR, "static", "firma_jorge.png"),
+    ]
+
+    logo_path = next((p for p in logo_candidates if os.path.exists(p)), None)
+    firma_path = next((p for p in firma_candidates if os.path.exists(p)), None)
+
+    logger.info(f"Logo path chosen: {logo_path}")
+    logger.info(f"Firma path chosen: {firma_path}")
 
     # logo
     try:
-        if os.path.exists(logo_path):
-            logo = RLImage(ImageReader(logo_path), width=120, height=60)
+        if logo_path:
+            # RLImage acepta directamente la ruta
+            logo = RLImage(logo_path, width=120, height=60)
         else:
-            raise FileNotFoundError("logo no encontrado")
+            raise FileNotFoundError("logo no encontrado en candidatos: " + ", ".join(logo_candidates))
     except Exception:
+        logger.exception("No se pudo cargar logo para el PDF")
         logo = Paragraph("", estilos['Normal'])
 
     header_table = Table([[logo, Paragraph(info_html, estilo_info)]], colWidths=[130, 360])
@@ -280,6 +292,7 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     elementos.append(Paragraph("COTIZACIÓN DETALLADA", estilos['Heading2']))
     elementos.append(Spacer(1, 12))
 
+    # Tabla principal
     datos = [["Descripción", "Cantidad", "Días/Min", "Valor Unitario", "Subtotal"]]
     for it in items:
         datos.append([
@@ -314,10 +327,13 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     elementos.append(Paragraph("Cordialmente,", estilos['Normal']))
     elementos.append(Spacer(1, 12))
     try:
-        if os.path.exists(firma_path):
-            firma_img = RLImage(ImageReader(firma_path), width=140, height=80, hAlign='LEFT')
+        if firma_path:
+            firma_img = RLImage(firma_path, width=140, height=80, hAlign='LEFT')
             elementos.append(firma_img)
+        else:
+            logger.info("firma no encontrada, se omitirá")
     except Exception:
+        logger.exception("Error al añadir la firma al PDF")
         elementos.append(Paragraph("(firma no disponible)", estilos['Normal']))
 
     elementos.append(Spacer(1, 6))
@@ -337,20 +353,11 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
 def root():
     return {"message": "API Cotizador 48 Voltios - OK"}
 
-# Debug: listar archivos estáticos para comprobar
-@app.get("/debug/files")
-def debug_files():
-    try:
-        static_list = os.listdir(STATIC_DIR)
-    except Exception as e:
-        static_list = {"error": str(e)}
-    return {"base_dir": BASE_DIR, "static_dir": STATIC_DIR, "static_files": static_list}
-
 @app.post("/cotizar/json", response_model=CotizarOut)
 def cotizar_json(payload: CotizarIn):
     servicio = (payload.servicio or "").lower()
     if servicio not in ("sonido_directo", "postproduccion", "ambos"):
-        raise HTTPException(status_code=400, detail="servicio inválido. Usa 'sonido_directo', 'postproduccion' o 'ambos'.")
+        raise HTTPException(status_code=400, detail="servicio inválido.")
     resp = calcular_respuesta(payload)
     return resp
 
@@ -358,25 +365,20 @@ def cotizar_json(payload: CotizarIn):
 def cotizar_pdf(payload: CotizarIn):
     servicio = (payload.servicio or "").lower()
     if servicio not in ("sonido_directo", "postproduccion", "ambos"):
-        raise HTTPException(status_code=400, detail="servicio inválido. Usa 'sonido_directo', 'postproduccion' o 'ambos'.")
-
+        raise HTTPException(status_code=400, detail="servicio inválido.")
     resp = calcular_respuesta(payload)
     if not resp.items:
-        raise HTTPException(status_code=400, detail="No hay ítems para cotizar (revisa sonido/post).")
-
+        raise HTTPException(status_code=400, detail="No hay ítems para cotizar.")
     items = [{"descripcion": i.descripcion, "cantidad": i.cantidad,
               "duracion": i.duracion, "unitario": i.unitario, "subtotal": i.subtotal}
              for i in resp.items]
-
     iva_aplicado = bool(payload.aplicar_iva)
     iva_amt = int(resp.iva)
     descuento_amt = int(resp.descuento)
     descuento_pct = int(payload.descuento_pct or 0)
-
     cliente_info = {"cliente": resp.cliente, "fecha": resp.fecha}
     safe_cliente = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in resp.cliente)
     filename = payload.pdf_filename or f"cotizacion_{safe_cliente}.pdf"
-
     try:
         pdf_bytes = generar_pdf_bytes(filename, items, resp.subtotal_sd, resp.subtotal_post,
                                       resp.total, cliente_info,
@@ -385,7 +387,6 @@ def cotizar_pdf(payload: CotizarIn):
     except RuntimeError as e:
         logger.exception("Error generating PDF")
         raise HTTPException(status_code=500, detail=str(e))
-
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
 
