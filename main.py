@@ -1,17 +1,19 @@
 # main.py
 import io
 import os
+import logging
 from datetime import date
-from typing import Optional, List
+from typing import Optional, List, Union
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-# NOTA: Imports de ReportLab **no** están aquí al nivel superior.
-# Se importan dentro de `generar_pdf_bytes` (lazy import) para evitar
-# que la app falle en tiempo de arranque si reportlab no está instalado.
+# logging básico
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("cotizador")
 
 # ---------------------------
 # Models (Pydantic)
@@ -22,22 +24,22 @@ class SonidoDirectoIn(BaseModel):
     lavalier: int = 0
     monitoreo: int = 0
     timecode: int = 0
-    grabadora: Optional[str] = ""   # "6", "10" o ""
+    grabadora: Optional[Union[str, int]] = None
     sonidista: bool = False
     microfonista: bool = False
 
 class PostProduccionIn(BaseModel):
     minutos: int = 0
-    mezcla: Optional[str] = "stereo"  # "stereo" o "5.1"
+    mezcla: Optional[str] = "stereo"
 
 class CotizarIn(BaseModel):
     cliente: Optional[str] = "Cliente sin nombre"
-    servicio: str   # "sonido_directo", "postproduccion", "ambos"
+    servicio: str
     sonido: Optional[SonidoDirectoIn] = None
     post: Optional[PostProduccionIn] = None
     aplicar_iva: bool = False
-    descuento_pct: Optional[int] = 0  # 0,10,20,30
-    fecha: Optional[str] = None   # si no se envía, la API pone la fecha de hoy
+    descuento_pct: Optional[int] = 0
+    fecha: Optional[str] = None
     pdf_filename: Optional[str] = None
 
 class ItemOut(BaseModel):
@@ -62,7 +64,6 @@ class CotizarOut(BaseModel):
 # ---------------------------
 app = FastAPI(title="API - Cotizador 48 Voltios")
 
-# Allow CORS from anywhere (ajusta en producción)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -84,12 +85,18 @@ P_MICROFONISTA = 250_000
 P_POST_STEREO = 300_000
 P_POST_5_1 = 400_000
 
-# Ruta base para buscar logo/firma: mismo directorio que este archivo
+# BASE_DIR: directorio donde está este fichero main.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# STATIC_DIR: carpeta donde pondremos logo48v.png y firma_jorge.png
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+os.makedirs(STATIC_DIR, exist_ok=True)  # crea static/ si no existe
+
+# Montamos static para poder probar en el navegador: /static/<archivo>
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ---------------------------
-# Lógica de cálculo
+# Lógica de cálculo (igual a la tuya)
 # ---------------------------
 def calcular_items(c: CotizarIn):
     items = []
@@ -98,42 +105,46 @@ def calcular_items(c: CotizarIn):
 
     servicio = (c.servicio or "").lower()
 
-    # SONIDO DIRECTO
     if servicio in ("sonido_directo", "ambos"):
         sd = c.sonido or SonidoDirectoIn()
         dias = max(0, int(sd.dias or 0))
 
         if dias > 0:
-            if sd.shotgun and sd.shotgun > 0:
-                sub = sd.shotgun * P_SHOTGUN * dias
-                items.append({"descripcion": "Micrófono Shotgun", "cantidad": sd.shotgun,
+            shotgun = int(sd.shotgun or 0)
+            if shotgun > 0:
+                sub = shotgun * P_SHOTGUN * dias
+                items.append({"descripcion": "Micrófono Shotgun", "cantidad": shotgun,
                               "duracion": f"{dias} días", "unitario": P_SHOTGUN, "subtotal": sub})
                 subtotal_sd += sub
 
-            if sd.lavalier and sd.lavalier > 0:
-                sub = sd.lavalier * P_LAVALIER * dias
-                items.append({"descripcion": "Sistemas inalámbricos Lavalier", "cantidad": sd.lavalier,
+            lavalier = int(sd.lavalier or 0)
+            if lavalier > 0:
+                sub = lavalier * P_LAVALIER * dias
+                items.append({"descripcion": "Sistemas inalámbricos Lavalier", "cantidad": lavalier,
                               "duracion": f"{dias} días", "unitario": P_LAVALIER, "subtotal": sub})
                 subtotal_sd += sub
 
-            if sd.monitoreo and sd.monitoreo > 0:
-                sub = sd.monitoreo * P_MONITOREO * dias
-                items.append({"descripcion": "Sistemas de Monitoreo", "cantidad": sd.monitoreo,
+            monitoreo = int(sd.monitoreo or 0)
+            if monitoreo > 0:
+                sub = monitoreo * P_MONITOREO * dias
+                items.append({"descripcion": "Sistemas de Monitoreo", "cantidad": monitoreo,
                               "duracion": f"{dias} días", "unitario": P_MONITOREO, "subtotal": sub})
                 subtotal_sd += sub
 
-            if sd.timecode and sd.timecode > 0:
-                sub = sd.timecode * P_TIMECODE * dias
-                items.append({"descripcion": "Sistemas Time Code", "cantidad": sd.timecode,
+            timecode = int(sd.timecode or 0)
+            if timecode > 0:
+                sub = timecode * P_TIMECODE * dias
+                items.append({"descripcion": "Sistemas Time Code", "cantidad": timecode,
                               "duracion": f"{dias} días", "unitario": P_TIMECODE, "subtotal": sub})
                 subtotal_sd += sub
 
-            if sd.grabadora == "6":
+            grab = str(sd.grabadora) if sd.grabadora is not None else ""
+            if grab == "6":
                 sub = P_MIXPRE6 * dias
                 items.append({"descripcion": "Grabadora MixPre-6", "cantidad": 1,
                               "duracion": f"{dias} días", "unitario": P_MIXPRE6, "subtotal": sub})
                 subtotal_sd += sub
-            elif sd.grabadora == "10":
+            elif grab == "10":
                 sub = P_MIXPRE10 * dias
                 items.append({"descripcion": "Grabadora MixPre-10", "cantidad": 1,
                               "duracion": f"{dias} días", "unitario": P_MIXPRE10, "subtotal": sub})
@@ -151,7 +162,6 @@ def calcular_items(c: CotizarIn):
                           "duracion": f"{profesional_days} días", "unitario": P_MICROFONISTA, "subtotal": sub})
             subtotal_sd += sub
 
-    # POSTPRODUCCIÓN
     if servicio in ("postproduccion", "ambos"):
         post = c.post or PostProduccionIn()
         minutos = max(0, int(post.minutos or 0))
@@ -170,10 +180,6 @@ def calcular_items(c: CotizarIn):
 
     return items, subtotal_sd, subtotal_post
 
-
-# ---------------------------
-# Cálculo final y response
-# ---------------------------
 def calcular_respuesta(c: CotizarIn):
     items, subtotal_sd, subtotal_post = calcular_items(c)
     total_pre = subtotal_sd + subtotal_post
@@ -188,7 +194,6 @@ def calcular_respuesta(c: CotizarIn):
     fecha_str = c.fecha if c.fecha else date.today().strftime("%d/%m/%Y")
     cliente = c.cliente or "Cliente sin nombre"
 
-    # Convertir items a salida (tipos y estructura)
     items_out = []
     for it in items:
         items_out.append(ItemOut(
@@ -211,14 +216,12 @@ def calcular_respuesta(c: CotizarIn):
     )
     return resp
 
-
 # ---------------------------
 # PDF generator (lazy import de reportlab)
 # ---------------------------
 def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtotal_post: int,
                       total: int, cliente_info: dict, iva_amt=0, descuento_amt=0,
                       iva_aplicado=False, descuento_pct=0) -> bytes:
-    # IMPORTS dentro de la función (lazy import)
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
@@ -228,8 +231,8 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
         from reportlab.lib.enums import TA_RIGHT
         from reportlab.lib.utils import ImageReader
     except Exception as e:
-        # Si reportlab no está disponible, devolvemos un error claro.
-        raise RuntimeError("ReportLab no está instalado en este entorno. Añade 'reportlab' y 'pillow' al requirements.txt") from e
+        logger.exception("ReportLab import failed")
+        raise RuntimeError("ReportLab no está instalado. Añade 'reportlab' y 'pillow' al requirements.txt") from e
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -250,17 +253,17 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     estilo_info = estilos['Normal'].clone('info')
     estilo_info.alignment = TA_RIGHT
 
-    # Intentar cargar logo y firma; si no están, cae en blanco
-    logo_path = os.path.join(BASE_DIR, "logo48v.png")
-    firma_path = os.path.join(BASE_DIR, "firma_jorge.png")
+    # Rutas dentro de static/
+    logo_path = os.path.join(STATIC_DIR, "logo48v.png")
+    firma_path = os.path.join(STATIC_DIR, "firma_jorge.png")
 
+    # logo
     try:
         if os.path.exists(logo_path):
             logo = RLImage(ImageReader(logo_path), width=120, height=60)
         else:
             raise FileNotFoundError("logo no encontrado")
     except Exception:
-        from reportlab.platypus import Paragraph  # reimport en caso de entrar aquí
         logo = Paragraph("", estilos['Normal'])
 
     header_table = Table([[logo, Paragraph(info_html, estilo_info)]], colWidths=[130, 360])
@@ -275,7 +278,6 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     elementos.append(Paragraph("COTIZACIÓN DETALLADA", estilos['Heading2']))
     elementos.append(Spacer(1, 12))
 
-    # Tabla principal
     datos = [["Descripción", "Cantidad", "Días/Min", "Valor Unitario", "Subtotal"]]
     for it in items:
         datos.append([
@@ -313,8 +315,6 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
         if os.path.exists(firma_path):
             firma_img = RLImage(ImageReader(firma_path), width=140, height=80, hAlign='LEFT')
             elementos.append(firma_img)
-        else:
-            raise FileNotFoundError("firma no encontrada")
     except Exception:
         elementos.append(Paragraph("(firma no disponible)", estilos['Normal']))
 
@@ -328,66 +328,64 @@ def generar_pdf_bytes(filename: str, items: List[dict], subtotal_sd: int, subtot
     buffer.seek(0)
     return buffer.read()
 
-
 # ---------------------------
 # Endpoints
 # ---------------------------
-
 @app.get("/")
 def root():
     return {"message": "API Cotizador 48 Voltios - OK"}
 
+# Debug: listar archivos estáticos para comprobar
+@app.get("/debug/files")
+def debug_files():
+    try:
+        static_list = os.listdir(STATIC_DIR)
+    except Exception as e:
+        static_list = {"error": str(e)}
+    return {"base_dir": BASE_DIR, "static_dir": STATIC_DIR, "static_files": static_list}
 
 @app.post("/cotizar/json", response_model=CotizarOut)
 def cotizar_json(payload: CotizarIn):
-    try:
-        resp = calcular_respuesta(payload)
-        return resp
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+    servicio = (payload.servicio or "").lower()
+    if servicio not in ("sonido_directo", "postproduccion", "ambos"):
+        raise HTTPException(status_code=400, detail="servicio inválido. Usa 'sonido_directo', 'postproduccion' o 'ambos'.")
+    resp = calcular_respuesta(payload)
+    return resp
 
 @app.post("/cotizar/pdf")
 def cotizar_pdf(payload: CotizarIn):
-    """
-    Devuelve application/pdf con la cotización.
-    En el JSON de entrada puedes usar "pdf_filename" para sugerir un nombre, p.e. "cotizacion_cliente.pdf".
-    """
+    servicio = (payload.servicio or "").lower()
+    if servicio not in ("sonido_directo", "postproduccion", "ambos"):
+        raise HTTPException(status_code=400, detail="servicio inválido. Usa 'sonido_directo', 'postproduccion' o 'ambos'.")
+
+    resp = calcular_respuesta(payload)
+    if not resp.items:
+        raise HTTPException(status_code=400, detail="No hay ítems para cotizar (revisa sonido/post).")
+
+    items = [{"descripcion": i.descripcion, "cantidad": i.cantidad,
+              "duracion": i.duracion, "unitario": i.unitario, "subtotal": i.subtotal}
+             for i in resp.items]
+
+    iva_aplicado = bool(payload.aplicar_iva)
+    iva_amt = int(resp.iva)
+    descuento_amt = int(resp.descuento)
+    descuento_pct = int(payload.descuento_pct or 0)
+
+    cliente_info = {"cliente": resp.cliente, "fecha": resp.fecha}
+    safe_cliente = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in resp.cliente)
+    filename = payload.pdf_filename or f"cotizacion_{safe_cliente}.pdf"
+
     try:
-        # calcular
-        resp = calcular_respuesta(payload)
-        # reconstruir items como dicts
-        items = [{"descripcion": i.descripcion, "cantidad": i.cantidad,
-                  "duracion": i.duracion, "unitario": i.unitario, "subtotal": i.subtotal}
-                 for i in resp.items]
-
-        iva_aplicado = bool(payload.aplicar_iva)
-        iva_amt = int(resp.iva)
-        descuento_amt = int(resp.descuento)
-        descuento_pct = int(payload.descuento_pct or 0)
-
-        cliente_info = {"cliente": resp.cliente, "fecha": resp.fecha}
-        # Sanitizar filename simple
-        safe_cliente = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in resp.cliente)
-        filename = payload.pdf_filename or f"cotizacion_{safe_cliente}.pdf"
-
-        # generar (aquí puede lanzar RuntimeError si falta reportlab)
-        try:
-            pdf_bytes = generar_pdf_bytes(filename, items, resp.subtotal_sd, resp.subtotal_post,
-                                          resp.total, cliente_info,
-                                          iva_amt=iva_amt, descuento_amt=descuento_amt,
-                                          iva_aplicado=iva_aplicado, descuento_pct=descuento_pct)
-        except RuntimeError as e:
-            # Error claro si reportlab no está instalado
-            raise HTTPException(status_code=500, detail=str(e))
-
-        return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
-                                 headers={"Content-Disposition": f"attachment; filename={filename}"})
-    except HTTPException:
-        raise
-    except Exception as e:
+        pdf_bytes = generar_pdf_bytes(filename, items, resp.subtotal_sd, resp.subtotal_post,
+                                      resp.total, cliente_info,
+                                      iva_amt=iva_amt, descuento_amt=descuento_amt,
+                                      iva_aplicado=iva_aplicado, descuento_pct=descuento_pct)
+    except RuntimeError as e:
+        logger.exception("Error generating PDF")
         raise HTTPException(status_code=500, detail=str(e))
 
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 @app.get("/health")
 def health():
